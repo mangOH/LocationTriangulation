@@ -1,0 +1,25 @@
+cflags:
+{
+    -std=c99
+    -I${CURDIR}/../positionComponent
+}
+
+requires:
+{
+    api:
+    {
+        airVantage/le_avdata.api
+        modemServices/le_mrc.api
+        wifi/le_wifiClient.api 
+    }
+
+    component:
+    {
+        positionComponent
+    }
+}
+
+sources:
+{
+    avPublisher.c
+}

@@ -1,0 +1,19 @@
+cflags:
+{
+    -std=c99
+}
+
+requires:
+{
+    api:
+    {
+        positioning/le_posCtrl.api
+        positioning/le_pos.api
+    }
+}
+
+sources:
+{
+    init.c
+    gps.c
+}
