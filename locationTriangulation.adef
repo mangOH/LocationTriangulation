@@ -26,6 +26,5 @@ bindings:
     locationTriangulation.positionComponent.le_posCtrl -> positioningService.le_posCtrl
 
     locationTriangulation.avPublisherComponent.le_mrc -> modemService.le_mrc
-    locationTriangulation.avPublisherComponent.le_wifiClient -> wifiService.le_wifiClient
     locationTriangulation.avPublisherComponent.le_avdata -> avcService.le_avdata
 }

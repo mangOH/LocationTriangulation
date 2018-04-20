@@ -2,7 +2,7 @@
 #include "interfaces.h"
 #include "gps.h"
 
-#define LOCATION_MAX_CELLS		6
+#define LOCATION_MAX_CELLS		15
 #define LOCATION_MAX_AP			15
 
 //--------------------------------------------------------------------------------------------------
@@ -96,13 +96,6 @@ struct Location
         char mnc[LE_MRC_MNC_BYTES];
         uint32_t cid;
     } pciCellInfo[LOCATION_MAX_CELLS];
-    struct {
-        uint8_t ssid[LE_WIFIDEFS_MAX_SSID_BYTES];
-	char bssid[LE_WIFIDEFS_MAX_BSSID_BYTES];
-	size_t ssidLen;
-	int16_t signal;
-    } wifiInfo[LOCATION_MAX_AP];
-    uint32_t numAPs;
     uint32_t numNeighborCells;
     uint32_t numPciCells;
 };
@@ -390,11 +383,12 @@ static void LocationPciScan
     struct Location *v = value;
     le_result_t res;
 
+    v->numPciCells = 0;
     le_mrc_ScanInformationListRef_t scanInformationListRef = le_mrc_PerformCellularNetworkPciScan(LE_MRC_BITMASK_RAT_LTE);
     if (scanInformationListRef)
     {
         le_mrc_ScanInformationRef_t scanInformationRef = le_mrc_GetFirstCellularNetworkScan(scanInformationListRef);
-        while (scanInformationRef)
+        while (scanInformationRef && (v->numPciCells < LOCATION_MAX_CELLS))
         {
             res = le_mrc_GetCellularNetworkMccMnc(scanInformationRef, 
                 v->pciCellInfo[v->numPciCells].mcc, sizeof(v->pciCellInfo[v->numPciCells].mcc), 
@@ -420,7 +414,11 @@ static void LocationPciScan
     }
 
 cleanup:
-    le_mrc_DeleteCellularNetworkScan(scanInformationListRef);
+    if (scanInformationListRef)
+    {
+        le_mrc_DeleteCellularNetworkScan(scanInformationListRef);
+    }
+
     return;
 }
 
@@ -442,9 +440,6 @@ static le_result_t LocationRead
     le_mrc_CellInfoRef_t cellRef;
     le_mrc_MetricsRef_t metricsRef;
     le_result_t res = LE_OK;
-
-    v->numNeighborCells = 0;
-    v->numPciCells = 0;
 
     res = le_mrc_GetCurrentNetworkMccMnc(v->servingCellInfo.mcc, sizeof(v->servingCellInfo.mcc), 
         v->servingCellInfo.mnc, sizeof(v->servingCellInfo.mnc));	
@@ -540,6 +535,7 @@ static le_result_t LocationRead
         v->servingCellInfo.rat, v->servingCellInfo.mcc, v->servingCellInfo.mnc, 
         v->servingCellInfo.cid, v->servingCellInfo.lac, v->servingCellInfo.signal);
 
+    v->numNeighborCells = 0;
     ngbrRef = le_mrc_GetNeighborCellsInfo();
     if (ngbrRef)
     {
@@ -571,31 +567,6 @@ static le_result_t LocationRead
         le_mrc_DeleteNeighborCellsInfo(ngbrRef);
     }
 
-    v->numAPs = 0;
-    le_wifiClient_AccessPointRef_t accessPointRef = le_wifiClient_GetFirstAccessPoint();
-    while ((NULL != accessPointRef) && (v->numAPs < LOCATION_MAX_AP))
-    {
-	res = le_wifiClient_GetSsid(accessPointRef, v->wifiInfo[v->numAPs].ssid, &v->wifiInfo[v->numAPs].ssidLen);
-    	if (res != LE_OK) 
-    	{
-            LE_ERROR("ERROR: le_wifiClient_GetSsid() failed(%d)", res);
-    	}
-
-	res = le_wifiClient_GetBssid(accessPointRef, v->wifiInfo[v->numAPs].bssid, sizeof(v->wifiInfo[v->numAPs].bssid));
-    	if (res != LE_OK) 
-    	{
-            LE_ERROR("ERROR: le_wifiClient_GetBssid() failed(%d)", res);
-    	}
-
-	v->wifiInfo[v->numAPs].signal = le_wifiClient_GetSignalStrength(accessPointRef);
-
-        LE_INFO("SSID('%.*s') BSSID('%s') signal(%d)", 
-	    v->wifiInfo[v->numAPs].ssidLen, v->wifiInfo[v->numAPs].ssid, 
-	    v->wifiInfo[v->numAPs].bssid, v->wifiInfo[v->numAPs].signal);
-        accessPointRef = le_wifiClient_GetNextAccessPoint();
-	v->numAPs++;
-    }
-
     LocationPciScan(v);
     return LE_OK;
 }
@@ -620,7 +591,6 @@ static bool LocationThreshold
     
     if (v1->numNeighborCells != v2->numNeighborCells) return true;
     else if (v1->numPciCells != v2->numPciCells) return true;
-    else if (v1->numAPs != v2->numAPs) return true;
     else 
     {
         uint32_t i = 0;
@@ -641,17 +611,6 @@ static bool LocationThreshold
 	    if (strncmp(v1->pciCellInfo[i].mcc, v2->pciCellInfo[i].mcc, sizeof(v1->pciCellInfo[i].mcc)) ||
                 strncmp(v1->pciCellInfo[i].mnc, v2->pciCellInfo[i].mnc, sizeof(v1->pciCellInfo[i].mnc)) ||
                 (v1->pciCellInfo[i].cid != v2->pciCellInfo[i].cid))
-		return true;
-	    i++;
-	}
-
-	i = 0;
-	while (i < v1->numAPs) 
-	{
-	    if ((v1->wifiInfo[i].signal != v2->wifiInfo[i].signal) ||
-		(strncmp(v1->wifiInfo[i].bssid, v2->wifiInfo[i].bssid, sizeof(v1->wifiInfo[i].bssid))) ||
-		(v1->wifiInfo[i].ssidLen != v2->wifiInfo[i].ssidLen) ||
-		(memcmp(v1->wifiInfo[i].ssid, v2->wifiInfo[i].ssid, v1->wifiInfo[i].ssidLen))) 
 		return true;
 	    i++;
 	}
@@ -835,39 +794,6 @@ static le_result_t LocationRecord
 	i++;
     }
 
-    i = 0;
-    while (i < v->numAPs) 
-    {
-	snprintf(node, sizeof(node), "Location.WiFi.%d.Ssid", i + 1);
-        LE_INFO("node('%s')", node);
-    	result = le_avdata_RecordString(RecordRef, node, (const char*)v->wifiInfo[i].ssid, timestamp);
-    	if (result != LE_OK)
-    	{
-            LE_ERROR("Couldn't record location Bssid reading - %s", LE_RESULT_TXT(result));
-            goto done;
-    	}
-
-	snprintf(node, sizeof(node), "Location.WiFi.%d.Bssid", i + 1);
-        LE_INFO("node('%s')", node);
-    	result = le_avdata_RecordString(RecordRef, node, v->wifiInfo[i].bssid, timestamp);
-    	if (result != LE_OK)
-    	{
-            LE_ERROR("Couldn't record location Bssid reading - %s", LE_RESULT_TXT(result));
-            goto done;
-    	}
-
-	snprintf(node, sizeof(node), "Location.WiFi.%d.Signal", i + 1);
-        LE_INFO("node('%s')", node);
-    	result = le_avdata_RecordInt(RecordRef, node, v->wifiInfo[i].signal, timestamp);
-    	if (result != LE_OK)
-    	{
-            LE_ERROR("Couldn't record location signal reading - %s", LE_RESULT_TXT(result));
-            goto done;
-    	}
-
-	i++;
-    }
-
 done:
     return result;
 }
@@ -906,17 +832,6 @@ static void LocationCopyValue
         strncpy(d->pciCellInfo[i].mnc, s->pciCellInfo[i].mnc, sizeof(d->pciCellInfo[i].mnc));
         d->pciCellInfo[i].cid = s->pciCellInfo[i].cid;
         i++;
-    }
-
-    i = 0;
-    d->numAPs = s->numAPs;
-    while (i < d->numAPs)
-    {
-	d->wifiInfo[i].ssidLen = s->wifiInfo[i].ssidLen;
-	memcpy(d->wifiInfo[i].ssid, s->wifiInfo[i].ssid, s->wifiInfo[i].ssidLen);
-        strncpy(d->wifiInfo[i].bssid, s->wifiInfo[i].bssid, sizeof(d->wifiInfo[i].bssid));
-	d->wifiInfo[i].signal = s->wifiInfo[i].signal;
-	i++;
     }
 }
 

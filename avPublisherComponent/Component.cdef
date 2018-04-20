@@ -10,7 +10,6 @@ requires:
     {
         airVantage/le_avdata.api
         modemServices/le_mrc.api
-        wifi/le_wifiClient.api 
     }
 
     component:
