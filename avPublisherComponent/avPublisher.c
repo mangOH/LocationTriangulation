@@ -88,15 +88,7 @@ struct Location
         char mcc[LE_MRC_MCC_BYTES];
         char mnc[LE_MRC_MNC_BYTES];
         uint32_t cid;
-    	uint16_t lac;
-	int32_t signal;
-    } neighbourCellInfo[LOCATION_MAX_CELLS];
-    struct {
-        char mcc[LE_MRC_MCC_BYTES];
-        char mnc[LE_MRC_MNC_BYTES];
-        uint32_t cid;
     } pciCellInfo[LOCATION_MAX_CELLS];
-    uint32_t numNeighborCells;
     uint32_t numPciCells;
 };
 
@@ -436,8 +428,6 @@ static le_result_t LocationRead
 )
 {
     struct Location *v = value;
-    le_mrc_NeighborCellsRef_t ngbrRef;
-    le_mrc_CellInfoRef_t cellRef;
     le_mrc_MetricsRef_t metricsRef;
     le_result_t res = LE_OK;
 
@@ -535,38 +525,6 @@ static le_result_t LocationRead
         v->servingCellInfo.rat, v->servingCellInfo.mcc, v->servingCellInfo.mnc, 
         v->servingCellInfo.cid, v->servingCellInfo.lac, v->servingCellInfo.signal);
 
-    v->numNeighborCells = 0;
-    ngbrRef = le_mrc_GetNeighborCellsInfo();
-    if (ngbrRef)
-    {
-        cellRef = le_mrc_GetFirstNeighborCellInfo(ngbrRef);
-        if (cellRef)
-        {
-            do
-            {
-                res = le_mrc_GetNeighborCellMccMnc(cellRef, 
-                    v->neighbourCellInfo[v->numNeighborCells].mcc, sizeof(v->neighbourCellInfo[v->numNeighborCells].mcc), 
-                    v->neighbourCellInfo[v->numNeighborCells].mnc, sizeof(v->neighbourCellInfo[v->numNeighborCells].mnc));	
-                if (res != LE_OK) 
-                {
-                    LE_ERROR("ERROR: le_mrc_GetCurrentNetworkMccMnc() failed(%d)", res);
-                }
-
-                v->neighbourCellInfo[v->numNeighborCells].cid = le_mrc_GetNeighborGlobalCellId(cellRef);
-                v->neighbourCellInfo[v->numNeighborCells].lac = le_mrc_GetNeighborCellLocAreaCode(cellRef);
-		v->neighbourCellInfo[v->numNeighborCells].signal = le_mrc_GetNeighborCellRxLevel(cellRef);
-		LE_INFO("%d - MCC/MNC('%s'/'%s') signal(%d) cellId(0x%08x) lac(0x%04x)",
-                    v->numNeighborCells + 1, v->neighbourCellInfo[v->numNeighborCells].mcc, v->neighbourCellInfo[v->numNeighborCells].mnc,
-                    v->neighbourCellInfo[v->numNeighborCells].signal, v->neighbourCellInfo[v->numNeighborCells].cid,
-                    v->neighbourCellInfo[v->numNeighborCells].lac);
-		v->numNeighborCells++;
-                cellRef = le_mrc_GetNextNeighborCellInfo(ngbrRef);
-            } while ((cellRef != NULL) && (v->numNeighborCells < LOCATION_MAX_CELLS));
-        }
-
-        le_mrc_DeleteNeighborCellsInfo(ngbrRef);
-    }
-
     LocationPciScan(v);
     return LE_OK;
 }
@@ -589,23 +547,10 @@ static bool LocationThreshold
     const struct Location *v1 = recordedValue;
     const struct Location *v2 = readValue;
     
-    if (v1->numNeighborCells != v2->numNeighborCells) return true;
-    else if (v1->numPciCells != v2->numPciCells) return true;
+    if (v1->numPciCells != v2->numPciCells) return true;
     else 
     {
         uint32_t i = 0;
-        while (i < v1->numNeighborCells) 
-	{
-	    if (strncmp(v1->neighbourCellInfo[i].mcc, v2->neighbourCellInfo[i].mcc, sizeof(v1->neighbourCellInfo[i].mcc)) ||
-                strncmp(v1->neighbourCellInfo[i].mnc, v2->neighbourCellInfo[i].mnc, sizeof(v1->neighbourCellInfo[i].mnc)) ||
-                (v1->neighbourCellInfo[i].cid != v2->neighbourCellInfo[i].cid) ||
-		(v1->neighbourCellInfo[i].lac != v2->neighbourCellInfo[i].lac) ||
-		(v1->neighbourCellInfo[i].signal != v2->neighbourCellInfo[i].signal))
-		return true;
-	    i++;
-	}
-
-        i = 0;
         while (i < v1->numPciCells) 
 	{
 	    if (strncmp(v1->pciCellInfo[i].mcc, v2->pciCellInfo[i].mcc, sizeof(v1->pciCellInfo[i].mcc)) ||
@@ -691,70 +636,6 @@ static le_result_t LocationRecord
         }
     }
 
-    while (i < v->numNeighborCells) 
-    {
-        if (strlen(v->neighbourCellInfo[i].mcc) > 0) 
-        {
-            snprintf(node, sizeof(node), "Location.NeighborCellInfo.%d.MCC", i + 1);
-            result = le_avdata_RecordString(RecordRef, node, v->neighbourCellInfo[i].mcc, timestamp);
-            if (result != LE_OK)
-            {
-                LE_ERROR("Couldn't record location cell ID reading - %s", LE_RESULT_TXT(result));
-                goto done;
-            }
-        }
-
-        if (strlen(v->neighbourCellInfo[i].mnc) > 0) 
-        {
-            snprintf(node, sizeof(node), "Location.NeighborCellInfo.%d.MNC", i + 1);
-            result = le_avdata_RecordString(RecordRef, node, v->neighbourCellInfo[i].mnc, timestamp);
-            if (result != LE_OK)
-            {
-                LE_ERROR("Couldn't record location cell ID reading - %s", LE_RESULT_TXT(result));
-                goto done;
-            }
-        }
-
-	if (v->neighbourCellInfo[i].cid != -1)
-	{
-	    snprintf(node, sizeof(node), "Location.NeighborCellInfo.%d.Cid", i + 1);
-            LE_INFO("node('%s')", node);
-            result = le_avdata_RecordInt(RecordRef, node, v->neighbourCellInfo[i].cid, timestamp);
-            if (result != LE_OK)
-            {
-                LE_ERROR("Couldn't record location cell ID reading - %s", LE_RESULT_TXT(result));
-                goto done;
-            }
-	}
-
-	if ((v->neighbourCellInfo[i].lac != UINT16_MAX) && (v->neighbourCellInfo[i].lac != -1))
-	{
-	    snprintf(node, sizeof(node), "Location.NeighborCellInfo.%d.Lac", i + 1);
-            LE_INFO("node('%s')", node);
-            result = le_avdata_RecordInt(RecordRef, node, v->neighbourCellInfo[i].lac, timestamp);
-            if (result != LE_OK)
-            {
-                LE_ERROR("Couldn't record location LAC reading - %s", LE_RESULT_TXT(result));
-                goto done;
-            }
-	}
-
-	if (v->neighbourCellInfo[i].signal)
-	{
-	    snprintf(node, sizeof(node), "Location.NeighborCellInfo.%d.Signal", i + 1);
-            LE_INFO("node('%s')", node);
-            result = le_avdata_RecordInt(RecordRef, node, v->neighbourCellInfo[i].signal, timestamp);
-            if (result != LE_OK)
-            {
-                LE_ERROR("Couldn't record location signal reading - %s", LE_RESULT_TXT(result));
-                goto done;
-            }
-	}
-
-	i++;
-    }
-
-    i = 0;
     while (i < v->numPciCells) 
     {
         if (strlen(v->pciCellInfo[i].mcc) > 0) 
@@ -813,18 +694,7 @@ static void LocationCopyValue
     const struct Location *s = src;
     uint32_t i = 0;
 
-    d->numNeighborCells = s->numNeighborCells;
-    while (i < d->numNeighborCells)
-    {
-        strncpy(d->neighbourCellInfo[i].mcc, s->neighbourCellInfo[i].mcc, sizeof(d->neighbourCellInfo[i].mcc));
-        strncpy(d->neighbourCellInfo[i].mnc, s->neighbourCellInfo[i].mnc, sizeof(d->neighbourCellInfo[i].mnc));
-        d->neighbourCellInfo[i].cid = s->neighbourCellInfo[i].cid;
-        d->neighbourCellInfo[i].lac = s->neighbourCellInfo[i].lac;
-        d->neighbourCellInfo[i].signal = s->neighbourCellInfo[i].signal;
-	i++;
-    }
-
-    i = 0;
+    
     d->numPciCells = s->numPciCells;
     while (i < d->numPciCells)
     {
